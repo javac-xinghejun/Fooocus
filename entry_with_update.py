@@ -31,10 +31,10 @@ try:
     if merge_result & pygit2.GIT_MERGE_ANALYSIS_UP_TO_DATE:
         print("Already up-to-date")
     elif merge_result & pygit2.GIT_MERGE_ANALYSIS_FASTFORWARD:
-        local_branch.set_target(remote_commit.id)
-        repo.head.set_target(remote_commit.id)
-        repo.checkout_tree(repo.get(remote_commit.id))
-        repo.reset(local_branch.target, pygit2.GIT_RESET_HARD)
+        # local_branch.set_target(remote_commit.id)
+        # repo.head.set_target(remote_commit.id)
+        # repo.checkout_tree(repo.get(remote_commit.id))
+        # repo.reset(local_branch.target, pygit2.GIT_RESET_HARD)
         print("Fast-forward merge")
     elif merge_result & pygit2.GIT_MERGE_ANALYSIS_NORMAL:
         print("Update failed - Did you modified any file?")

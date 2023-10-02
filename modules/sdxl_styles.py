@@ -941,6 +941,9 @@ styles = {normalize_key(k['name']): (k['prompt'], k['negative_prompt']) for k in
 style_keys = list(styles.keys())
 
 SD_XL_BASE_RATIOS = {
+    "0.45": (900, 1990),
+    "0.67": (1024, 1536),
+    "1.5": (1536, 1024),
     "0.5": (704, 1408),
     "0.52": (704, 1344),
     "0.57": (768, 1344),
