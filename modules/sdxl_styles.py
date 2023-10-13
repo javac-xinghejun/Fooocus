@@ -1,9 +1,4 @@
-from modules.util import join_prompts
-
-
-fooocus_expansion = "Fooocus V2"
-default_styles = ["Default (Slightly Cinematic)"]
-
+import modules.path
 # https://github.com/twri/sdxl_prompt_styler/blob/main/sdxl_styles.json
 
 styles = [
@@ -936,9 +931,11 @@ def normalize_key(k):
     return k
 
 
-default_styles = [normalize_key(x) for x in default_styles]
 styles = {normalize_key(k['name']): (k['prompt'], k['negative_prompt']) for k in styles}
 style_keys = list(styles.keys())
+fooocus_expansion = "Fooocus V2"
+legal_style_names = [fooocus_expansion] + style_keys
+
 
 SD_XL_BASE_RATIOS = {
     "0.5": (704, 1408),
@@ -969,7 +966,20 @@ SD_XL_BASE_RATIOS = {
     "3.0": (1728, 576),
 }
 
-aspect_ratios = {str(v[0]) + '×' + str(v[1]): v for k, v in SD_XL_BASE_RATIOS.items()}
+aspect_ratios = {}
+default_aspect_ratio = None
+
+# import math
+
+for k, (w, h) in SD_XL_BASE_RATIOS.items():
+    txt = f'{w}×{h}'
+
+    # gcd = math.gcd(w, h)
+    # txt += f' {w//gcd}:{h//gcd}'
+    
+    aspect_ratios[txt] = (w, h)
+    if k == "1.29":
+        default_aspect_ratio = txt
 
 
 def apply_style(style, positive):
