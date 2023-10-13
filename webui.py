@@ -112,10 +112,10 @@ with shared.gradio_root:
 
         with gr.Column(scale=0.5, visible=False) as right_col:
             with gr.Tab(label='Setting'):
-                performance_selction = gr.Radio(label='Performance', choices=['Speed', 'Quality'], value='Speed')
+                performance_selction = gr.Radio(label='Performance', choices=['Speed', 'Quality'], value='Quality')
                 aspect_ratios_selction = gr.Radio(label='Aspect Ratios', choices=list(aspect_ratios.keys()),
                                                   value='1152×896', info='width × height')
-                image_number = gr.Slider(label='Image Number', minimum=1, maximum=32, step=1, value=2)
+                image_number = gr.Slider(label='Image Number', minimum=1, maximum=32, step=1, value=1)
                 negative_prompt = gr.Textbox(label='Negative Prompt', show_label=True, placeholder="Type prompt here.",
                                              info='Describing objects that you do not want to see.')
                 seed_random = gr.Checkbox(label='Random', value=True)
