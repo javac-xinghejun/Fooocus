@@ -339,7 +339,11 @@ def free_memory(memory_required, device, keep_loaded=[]):
 
     if unloaded_model:
         soft_empty_cache()
-
+    else:
+        if vram_state != VRAMState.HIGH_VRAM:
+            mem_free_total, mem_free_torch = get_free_memory(device, torch_free_too=True)
+            if mem_free_torch > mem_free_total * 0.25:
+                soft_empty_cache()
 
 def load_models_gpu(models, memory_required=0):
     global vram_state
@@ -447,6 +451,13 @@ def unet_inital_load_device(parameters, dtype):
         return torch_dev
     else:
         return cpu_dev
+
+def unet_dtype(device=None, model_params=0):
+    if args.bf16_unet:
+        return torch.bfloat16
+    if should_use_fp16(device=device, model_params=model_params):
+        return torch.float16
+    return torch.float32
 
 def text_encoder_offload_device():
     if args.gpu_only:
@@ -660,7 +671,7 @@ def should_use_fp16(device=None, model_params=0, prioritize_performance=True):
         return False
 
     #FP16 is just broken on these cards
-    nvidia_16_series = ["1660", "1650", "1630", "T500", "T550", "T600", "MX550", "MX450", "CMP 30HX"]
+    nvidia_16_series = ["1660", "1650", "1630", "T500", "T550", "T600", "MX550", "MX450", "CMP 30HX", "T2000", "T1000", "T1200"]
     for x in nvidia_16_series:
         if x in props.name:
             return False

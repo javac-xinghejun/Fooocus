@@ -1,14 +1,14 @@
 import os
 import json
+import args_manager
 import modules.flags
 import modules.sdxl_styles
 
 from modules.model_loader import load_file_from_url
-
+from modules.util import get_files_from_folder
 
 config_path = "user_path_config.txt"
 config_dict = {}
-
 
 try:
     if os.path.exists(config_path):
@@ -17,6 +17,23 @@ try:
 except Exception as e:
     print('Load path config failed')
     print(e)
+
+preset = args_manager.args.preset
+
+if isinstance(preset, str):
+    preset = os.path.abspath(f'./presets/{preset}.json')
+    try:
+        if os.path.exists(preset):
+            with open(preset, "r", encoding="utf-8") as json_file:
+                preset = json.load(json_file)
+    except Exception as e:
+        print('Load preset config failed')
+        print(e)
+
+preset = preset if isinstance(preset, dict) else None
+
+if preset is not None:
+    config_dict.update(preset)
 
 
 def get_dir_or_set_default(key, default_value):
@@ -33,24 +50,27 @@ def get_dir_or_set_default(key, default_value):
 
 modelfile_path = get_dir_or_set_default('modelfile_path', '../models/checkpoints/')
 lorafile_path = get_dir_or_set_default('lorafile_path', '../models/loras/')
+embeddings_path = get_dir_or_set_default('embeddings_path', '../models/embeddings/')
 vae_approx_path = get_dir_or_set_default('vae_approx_path', '../models/vae_approx/')
 upscale_models_path = get_dir_or_set_default('upscale_models_path', '../models/upscale_models/')
 inpaint_models_path = get_dir_or_set_default('inpaint_models_path', '../models/inpaint/')
 controlnet_models_path = get_dir_or_set_default('controlnet_models_path', '../models/controlnet/')
 clip_vision_models_path = get_dir_or_set_default('clip_vision_models_path', '../models/clip_vision/')
-fooocus_expansion_path = get_dir_or_set_default('fooocus_expansion_path', '../models/prompt_expansion/fooocus_expansion')
+fooocus_expansion_path = get_dir_or_set_default('fooocus_expansion_path',
+                                                '../models/prompt_expansion/fooocus_expansion')
 temp_outputs_path = get_dir_or_set_default('temp_outputs_path', '../outputs/')
 
 
-def get_config_item_or_set_default(key, default_value, validator):
+def get_config_item_or_set_default(key, default_value, validator, disable_empty_as_none=False):
     global config_dict
     if key not in config_dict:
         config_dict[key] = default_value
         return default_value
 
     v = config_dict.get(key, None)
-    if v is None or v == '':
-        v = 'None'
+    if not disable_empty_as_none:
+        if v is None or v == '':
+            v = 'None'
     if validator(v):
         return v
     else:
@@ -61,17 +81,17 @@ def get_config_item_or_set_default(key, default_value, validator):
 default_base_model_name = get_config_item_or_set_default(
     key='default_model',
     default_value='sd_xl_base_1.0_0.9vae.safetensors',
-    validator=lambda x: isinstance(x, str) and os.path.exists(os.path.join(modelfile_path, x))
+    validator=lambda x: isinstance(x, str)
 )
 default_refiner_model_name = get_config_item_or_set_default(
     key='default_refiner',
     default_value='sd_xl_refiner_1.0_0.9vae.safetensors',
-    validator=lambda x: x == 'None' or (isinstance(x, str) and os.path.exists(os.path.join(modelfile_path, x)))
+    validator=lambda x: isinstance(x, str)
 )
 default_lora_name = get_config_item_or_set_default(
     key='default_lora',
     default_value='sd_xl_offset_example-lora_1.0.safetensors',
-    validator=lambda x: x == 'None' or (isinstance(x, str) and os.path.exists(os.path.join(lorafile_path, x)))
+    validator=lambda x: isinstance(x, str)
 )
 default_lora_weight = get_config_item_or_set_default(
     key='default_lora_weight',
@@ -101,32 +121,75 @@ default_styles = get_config_item_or_set_default(
 default_negative_prompt = get_config_item_or_set_default(
     key='default_negative_prompt',
     default_value='low quality, bad hands, bad eyes, cropped, missing fingers, extra digit',
-    validator=lambda x: isinstance(x, str)
+    validator=lambda x: isinstance(x, str),
+    disable_empty_as_none=True
+)
+default_positive_prompt = get_config_item_or_set_default(
+    key='default_positive_prompt',
+    default_value='',
+    validator=lambda x: isinstance(x, str),
+    disable_empty_as_none=True
+)
+default_advanced_checkbox = get_config_item_or_set_default(
+    key='default_advanced_checkbox',
+    default_value=False,
+    validator=lambda x: isinstance(x, bool)
+)
+default_image_number = get_config_item_or_set_default(
+    key='default_image_number',
+    default_value=2,
+    validator=lambda x: isinstance(x, int) and x >= 1 and x <= 32
+)
+checkpoint_downloads = get_config_item_or_set_default(
+    key='checkpoint_downloads',
+    default_value={
+        'sd_xl_base_1.0_0.9vae.safetensors':
+            'https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0_0.9vae.safetensors',
+        'sd_xl_refiner_1.0_0.9vae.safetensors':
+            'https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0_0.9vae.safetensors'
+    },
+    validator=lambda x: isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in x.items())
+)
+lora_downloads = get_config_item_or_set_default(
+    key='lora_downloads',
+    default_value={
+        'sd_xl_offset_example-lora_1.0.safetensors':
+            'https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_offset_example-lora_1.0.safetensors'
+    },
+    validator=lambda x: isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in x.items())
+)
+embeddings_downloads = get_config_item_or_set_default(
+    key='embeddings_downloads',
+    default_value={},
+    validator=lambda x: isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in x.items())
+)
+available_aspect_ratios = get_config_item_or_set_default(
+    key='available_aspect_ratios',
+    default_value=['704*1408', '704*1344', '768*1344', '768*1280', '832*1216', '832*1152', '896*1152', '896*1088', '960*1088', '960*1024', '1024*1024', '1024*960', '1088*960', '1088*896', '1152*896', '1152*832', '1216*832', '1280*768', '1344*768', '1344*704', '1408*704', '1472*704', '1536*640', '1600*640', '1664*576', '1728*576'],
+    validator=lambda x: isinstance(x, list) and all('*' in v for v in x) and len(x) > 1
+)
+default_aspect_ratio = get_config_item_or_set_default(
+    key='default_aspect_ratio',
+    default_value='1152*896' if '1152*896' in available_aspect_ratios else available_aspect_ratios[0],
+    validator=lambda x: x in available_aspect_ratios
 )
 
-with open(config_path, "w", encoding="utf-8") as json_file:
-    json.dump(config_dict, json_file, indent=4)
-
+if preset is None:
+    # Do not overwrite user config if preset is applied.
+    with open(config_path, "w", encoding="utf-8") as json_file:
+        json.dump(config_dict, json_file, indent=4)
 
 os.makedirs(temp_outputs_path, exist_ok=True)
 
 model_filenames = []
 lora_filenames = []
 
+available_aspect_ratios = [x.replace('*', '×') for x in available_aspect_ratios]
+default_aspect_ratio = default_aspect_ratio.replace('*', '×')
 
-def get_model_filenames(folder_path):
-    if not os.path.isdir(folder_path):
-        raise ValueError("Folder path is not a valid directory.")
 
-    filenames = []
-    for filename in os.listdir(folder_path):
-        if os.path.isfile(os.path.join(folder_path, filename)):
-            for ends in ['.pth', '.ckpt', '.bin', '.safetensors', '.fooocus.patch']:
-                if filename.lower().endswith(ends):
-                    filenames.append(filename)
-                    break
-
-    return filenames
+def get_model_filenames(folder_path, name_filter=None):
+    return get_files_from_folder(folder_path, ['.pth', '.ckpt', '.bin', '.safetensors', '.fooocus.patch'], name_filter)
 
 
 def update_all_model_names():
@@ -144,6 +207,15 @@ def downloading_inpaint_models(v):
         model_dir=inpaint_models_path,
         file_name='fooocus_inpaint_head.pth'
     )
+    head_file = os.path.join(inpaint_models_path, 'fooocus_inpaint_head.pth')
+    patch_file = None
+
+    # load_file_from_url(
+    #     url='https://huggingface.co/lllyasviel/Annotators/resolve/main/ControlNetLama.pth',
+    #     model_dir=inpaint_models_path,
+    #     file_name='ControlNetLama.pth'
+    # )
+    # lama_file = os.path.join(inpaint_models_path, 'ControlNetLama.pth')
 
     if v == 'v1':
         load_file_from_url(
@@ -151,7 +223,7 @@ def downloading_inpaint_models(v):
             model_dir=inpaint_models_path,
             file_name='inpaint.fooocus.patch'
         )
-        return os.path.join(inpaint_models_path, 'fooocus_inpaint_head.pth'), os.path.join(inpaint_models_path, 'inpaint.fooocus.patch')
+        patch_file = os.path.join(inpaint_models_path, 'inpaint.fooocus.patch')
 
     if v == 'v2.5':
         load_file_from_url(
@@ -159,7 +231,9 @@ def downloading_inpaint_models(v):
             model_dir=inpaint_models_path,
             file_name='inpaint_v25.fooocus.patch'
         )
-        return os.path.join(inpaint_models_path, 'fooocus_inpaint_head.pth'), os.path.join(inpaint_models_path, 'inpaint_v25.fooocus.patch')
+        patch_file = os.path.join(inpaint_models_path, 'inpaint_v25.fooocus.patch')
+
+    return head_file, patch_file
 
 
 def downloading_controlnet_canny():
