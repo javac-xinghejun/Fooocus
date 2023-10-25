@@ -1,4 +1,7 @@
+import contextlib
+import os
 import torch
+import time
 import fcbh.model_base
 import fcbh.ldm.modules.diffusionmodules.openaimodel
 import fcbh.samplers
@@ -18,9 +21,11 @@ import fcbh.samplers
 import fcbh.cli_args
 import args_manager
 import modules.advanced_parameters as advanced_parameters
+import warnings
+import safetensors.torch
 
 from fcbh.k_diffusion import utils
-from fcbh.k_diffusion.sampling import BrownianTreeNoiseSampler, trange
+from fcbh.k_diffusion.sampling import trange
 from fcbh.ldm.modules.diffusionmodules.openaimodel import timestep_embedding, forward_timestep_embed
 
 
@@ -34,6 +39,7 @@ cfg_x0 = 0.0
 cfg_s = 1.0
 cfg_cin = 1.0
 adaptive_cfg = 0.7
+eps_record = None
 
 
 def calculate_weight_patched(self, patches, weight, key):
@@ -188,10 +194,12 @@ def patched_sampler_cfg_function(args):
 
 
 def patched_discrete_eps_ddpm_denoiser_forward(self, input, sigma, **kwargs):
-    global cfg_x0, cfg_s, cfg_cin
+    global cfg_x0, cfg_s, cfg_cin, eps_record
     c_out, c_in = [utils.append_dims(x, input.ndim) for x in self.get_scalings(sigma)]
     cfg_x0, cfg_s, cfg_cin = input, c_out, c_in
     eps = self.get_eps(input * c_in, self.sigma_to_t(sigma), **kwargs)
+    if eps_record is not None:
+        eps_record = eps.clone().cpu()
     return input + eps * c_out
 
 
@@ -272,12 +280,13 @@ def encode_token_weights_patched_with_a1111_method(self, token_weight_pairs):
     return torch.cat(output, dim=-2).cpu(), first_pooled.cpu()
 
 
-@torch.no_grad()
-def sample_dpmpp_fooocus_2m_sde_inpaint_seamless(model, x, sigmas, extra_args=None, callback=None, disable=None, eta=1., s_noise=1., noise_sampler=None, **kwargs):
-    print('[Sampler] Inpaint sampler is activated.')
+globalBrownianTreeNoiseSampler = None
 
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=extra_args.get("seed", None), cpu=False) if noise_sampler is None else noise_sampler
+
+@torch.no_grad()
+def sample_dpmpp_fooocus_2m_sde_inpaint_seamless(model, x, sigmas, extra_args=None, callback=None,
+                                                 disable=None, eta=1., s_noise=1., **kwargs):
+    print('[Sampler] Fooocus sampler is activated.')
 
     seed = extra_args.get("seed", None)
     assert isinstance(seed, int)
@@ -288,8 +297,6 @@ def sample_dpmpp_fooocus_2m_sde_inpaint_seamless(model, x, sigmas, extra_args=No
     def get_energy():
         return torch.randn(x.size(), dtype=x.dtype, generator=energy_generator, device="cpu").to(x)
 
-    sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
-    noise_sampler = BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=seed, cpu=True) if noise_sampler is None else noise_sampler
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones([x.shape[0]])
 
@@ -328,7 +335,7 @@ def sample_dpmpp_fooocus_2m_sde_inpaint_seamless(model, x, sigmas, extra_args=No
                 r = h_last / h
                 x = x + 0.5 * (-h - eta_h).expm1().neg() * (1 / r) * (denoised - old_denoised)
 
-            x = x + noise_sampler(sigmas[i], sigmas[i + 1]) * sigmas[i + 1] * (
+            x = x + globalBrownianTreeNoiseSampler(sigmas[i], sigmas[i + 1]) * sigmas[i + 1] * (
                         -2 * eta_h).expm1().neg().sqrt() * s_noise
 
         old_denoised = denoised
@@ -452,43 +459,78 @@ def patched_unet_forward(self, x, timesteps=None, context=None, y=None, control=
         return self.out(h)
 
 
-def text_encoder_device_patched():
-    # Fooocus's style system uses text encoder much more times than fcbh so this makes things much faster.
-    return fcbh.model_management.get_torch_device()
+def patched_load_models_gpu(*args, **kwargs):
+    execution_start_time = time.perf_counter()
+    y = fcbh.model_management.load_models_gpu_origin(*args, **kwargs)
+    moving_time = time.perf_counter() - execution_start_time
+    if moving_time > 0.1:
+        print(f'[Fooocus Model Management] Moving model(s) has taken {moving_time:.2f} seconds')
+    return y
 
 
-def patched_get_autocast_device(dev):
-    # https://github.com/lllyasviel/Fooocus/discussions/571
-    # https://github.com/lllyasviel/Fooocus/issues/620
-    result = ''
-    if hasattr(dev, 'type'):
-        result = str(dev.type)
-    if 'cuda' in result:
-        return 'cuda'
-    else:
-        return 'cpu'
+def build_loaded(module, loader_name):
+    original_loader_name = loader_name + '_origin'
+
+    if not hasattr(module, original_loader_name):
+        setattr(module, original_loader_name, getattr(module, loader_name))
+
+    original_loader = getattr(module, original_loader_name)
+
+    def loader(*args, **kwargs):
+        result = None
+        try:
+            result = original_loader(*args, **kwargs)
+        except Exception as e:
+            result = None
+            exp = str(e) + '\n'
+            for path in list(args) + list(kwargs.values()):
+                if isinstance(path, str):
+                    if os.path.exists(path):
+                        exp += f'File corrupted: {path} \n'
+                        corrupted_backup_file = path + '.corrupted'
+                        if os.path.exists(corrupted_backup_file):
+                            os.remove(corrupted_backup_file)
+                        os.replace(path, corrupted_backup_file)
+                        if os.path.exists(path):
+                            os.remove(path)
+                        exp += f'Fooocus has tried to move the corrupted file to {corrupted_backup_file} \n'
+                        exp += f'You may try again now and Fooocus will download models again. \n'
+            raise ValueError(exp)
+        return result
+
+    setattr(module, loader_name, loader)
+    return
+
+
+def disable_smart_memory():
+    print(f'[Fooocus] Disabling smart memory')
+    fcbh.model_management.DISABLE_SMART_MEMORY = True
+    args_manager.args.disable_smart_memory = True
+    fcbh.cli_args.args.disable_smart_memory = True
+    return
 
 
 def patch_all():
-    if not fcbh.model_management.DISABLE_SMART_MEMORY:
-        vram_inadequate = fcbh.model_management.total_vram < 20 * 1024
-        is_old_gpu_arch = not fcbh.model_management.should_use_fp16()
-        if vram_inadequate or is_old_gpu_arch:
-            # https://github.com/lllyasviel/Fooocus/issues/602
-            print(f'[Fooocus Smart Memory] Disabling smart memory, '
-                  f'vram_inadequate = {vram_inadequate}, is_old_gpu_arch = {is_old_gpu_arch}.')
-            fcbh.model_management.DISABLE_SMART_MEMORY = True
-            args_manager.args.disable_smart_memory = True
-            fcbh.cli_args.args.disable_smart_memory = True
+    # Many recent reports show that Comfyanonymous's method is still not robust enough and many 4090s are broken
+    # We will not use it until this method is really usable
+    # For example https://github.com/lllyasviel/Fooocus/issues/724
+    disable_smart_memory()
 
-    fcbh.model_management.get_autocast_device = patched_get_autocast_device
-    fcbh.samplers.SAMPLER_NAMES += ['dpmpp_fooocus_2m_sde_inpaint_seamless']
-    fcbh.model_management.text_encoder_device = text_encoder_device_patched
+    if not hasattr(fcbh.model_management, 'load_models_gpu_origin'):
+        fcbh.model_management.load_models_gpu_origin = fcbh.model_management.load_models_gpu
+
+    fcbh.model_management.load_models_gpu = patched_load_models_gpu
     fcbh.model_patcher.ModelPatcher.calculate_weight = calculate_weight_patched
     fcbh.cldm.cldm.ControlNet.forward = patched_cldm_forward
     fcbh.ldm.modules.diffusionmodules.openaimodel.UNetModel.forward = patched_unet_forward
-    fcbh.k_diffusion.sampling.sample_dpmpp_fooocus_2m_sde_inpaint_seamless = sample_dpmpp_fooocus_2m_sde_inpaint_seamless
+    fcbh.k_diffusion.sampling.sample_dpmpp_2m_sde_gpu = sample_dpmpp_fooocus_2m_sde_inpaint_seamless
     fcbh.k_diffusion.external.DiscreteEpsDDPMDenoiser.forward = patched_discrete_eps_ddpm_denoiser_forward
     fcbh.model_base.SDXL.encode_adm = sdxl_encode_adm_patched
     fcbh.sd1_clip.ClipTokenWeightEncoder.encode_token_weights = encode_token_weights_patched_with_a1111_method
+
+    warnings.filterwarnings(action='ignore', module='torchsde')
+
+    build_loaded(safetensors.torch, 'load_file')
+    build_loaded(torch, 'load')
+
     return
