@@ -23,6 +23,7 @@ import fcbh.model_patcher
 import fcbh.lora
 import fcbh.t2i_adapter.adapter
 import fcbh.supported_models_base
+import fcbh.taesd.taesd
 
 def load_model_weights(model, sd):
     m, u = model.load_state_dict(sd, strict=False)
@@ -35,7 +36,7 @@ def load_model_weights(model, sd):
             w = sd.pop(x)
             del w
     if len(m) > 0:
-        print("missing", m)
+        print("extra keys", m)
     return model
 
 def load_clip_weights(model, sd):
@@ -55,13 +56,26 @@ def load_clip_weights(model, sd):
 
 
 def load_lora_for_models(model, clip, lora, strength_model, strength_clip):
-    key_map = fcbh.lora.model_lora_keys_unet(model.model)
-    key_map = fcbh.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
+    key_map = {}
+    if model is not None:
+        key_map = fcbh.lora.model_lora_keys_unet(model.model, key_map)
+    if clip is not None:
+        key_map = fcbh.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
+
     loaded = fcbh.lora.load_lora(lora, key_map)
-    new_modelpatcher = model.clone()
-    k = new_modelpatcher.add_patches(loaded, strength_model)
-    new_clip = clip.clone()
-    k1 = new_clip.add_patches(loaded, strength_clip)
+    if model is not None:
+        new_modelpatcher = model.clone()
+        k = new_modelpatcher.add_patches(loaded, strength_model)
+    else:
+        k = ()
+        new_modelpatcher = None
+
+    if clip is not None:
+        new_clip = clip.clone()
+        k1 = new_clip.add_patches(loaded, strength_clip)
+    else:
+        k1 = ()
+        new_clip = None
     k = set(k)
     k1 = set(k1)
     for x in loaded:
@@ -82,10 +96,7 @@ class CLIP:
         load_device = model_management.text_encoder_device()
         offload_device = model_management.text_encoder_offload_device()
         params['device'] = offload_device
-        if model_management.should_use_fp16(load_device, prioritize_performance=False):
-            params['dtype'] = torch.float16
-        else:
-            params['dtype'] = torch.float32
+        params['dtype'] = model_management.text_encoder_dtype(load_device)
 
         self.cond_stage_model = clip(**(params))
 
@@ -144,10 +155,16 @@ class VAE:
         if 'decoder.up_blocks.0.resnets.0.norm1.weight' in sd.keys(): #diffusers format
             sd = diffusers_convert.convert_vae_state_dict(sd)
 
+        self.memory_used_encode = lambda shape, dtype: (1767 * shape[2] * shape[3]) * model_management.dtype_size(dtype) #These are for AutoencoderKL and need tweaking (should be lower)
+        self.memory_used_decode = lambda shape, dtype: (2178 * shape[2] * shape[3] * 64) * model_management.dtype_size(dtype)
+
         if config is None:
-            #default SD1.x/SD2.x VAE parameters
-            ddconfig = {'double_z': True, 'z_channels': 4, 'resolution': 256, 'in_channels': 3, 'out_ch': 3, 'ch': 128, 'ch_mult': [1, 2, 4, 4], 'num_res_blocks': 2, 'attn_resolutions': [], 'dropout': 0.0}
-            self.first_stage_model = AutoencoderKL(ddconfig=ddconfig, embed_dim=4)
+            if "taesd_decoder.1.weight" in sd:
+                self.first_stage_model = fcbh.taesd.taesd.TAESD()
+            else:
+                #default SD1.x/SD2.x VAE parameters
+                ddconfig = {'double_z': True, 'z_channels': 4, 'resolution': 256, 'in_channels': 3, 'out_ch': 3, 'ch': 128, 'ch_mult': [1, 2, 4, 4], 'num_res_blocks': 2, 'attn_resolutions': [], 'dropout': 0.0}
+                self.first_stage_model = AutoencoderKL(ddconfig=ddconfig, embed_dim=4)
         else:
             self.first_stage_model = AutoencoderKL(**(config['params']))
         self.first_stage_model = self.first_stage_model.eval()
@@ -196,7 +213,7 @@ class VAE:
     def decode(self, samples_in):
         self.first_stage_model = self.first_stage_model.to(self.device)
         try:
-            memory_used = (2562 * samples_in.shape[2] * samples_in.shape[3] * 64) * 1.7
+            memory_used = self.memory_used_decode(samples_in.shape, self.vae_dtype)
             model_management.free_memory(memory_used, self.device)
             free_memory = model_management.get_free_memory(self.device)
             batch_number = int(free_memory / memory_used)
@@ -224,7 +241,7 @@ class VAE:
         self.first_stage_model = self.first_stage_model.to(self.device)
         pixel_samples = pixel_samples.movedim(-1,1)
         try:
-            memory_used = (2078 * pixel_samples.shape[2] * pixel_samples.shape[3]) * 1.7 #NOTE: this constant along with the one in the decode above are estimated from the mem usage for the VAE and could change.
+            memory_used = self.memory_used_encode(pixel_samples.shape, self.vae_dtype)
             model_management.free_memory(memory_used, self.device)
             free_memory = model_management.get_free_memory(self.device)
             batch_number = int(free_memory / memory_used)
@@ -360,7 +377,7 @@ def load_checkpoint(config_path=None, ckpt_path=None, output_vae=True, output_cl
 
     from . import latent_formats
     model_config.latent_format = latent_formats.SD15(scale_factor=scale_factor)
-    model_config.unet_config = unet_config
+    model_config.unet_config = model_detection.convert_config(unet_config)
 
     if config['model']["target"].endswith("ImageEmbeddingConditionedLatentDiffusion"):
         model = model_base.SD21UNCLIP(model_config, noise_aug_config["params"], model_type=model_type)
@@ -388,11 +405,13 @@ def load_checkpoint(config_path=None, ckpt_path=None, output_vae=True, output_cl
         if clip_config["target"].endswith("FrozenOpenCLIPEmbedder"):
             clip_target.clip = sd2_clip.SD2ClipModel
             clip_target.tokenizer = sd2_clip.SD2Tokenizer
+            clip = CLIP(clip_target, embedding_directory=embedding_directory)
+            w.cond_stage_model = clip.cond_stage_model.clip_h
         elif clip_config["target"].endswith("FrozenCLIPEmbedder"):
             clip_target.clip = sd1_clip.SD1ClipModel
             clip_target.tokenizer = sd1_clip.SD1Tokenizer
-        clip = CLIP(clip_target, embedding_directory=embedding_directory)
-        w.cond_stage_model = clip.cond_stage_model
+            clip = CLIP(clip_target, embedding_directory=embedding_directory)
+            w.cond_stage_model = clip.cond_stage_model.clip_l
         load_clip_weights(w, state_dict)
 
     return (fcbh.model_patcher.ModelPatcher(model, load_device=model_management.get_torch_device(), offload_device=offload_device), clip, vae)
@@ -429,6 +448,7 @@ def load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, o
 
     if output_vae:
         vae_sd = fcbh.utils.state_dict_prefix_replace(sd, {"first_stage_model.": ""}, filter_keys=True)
+        vae_sd = model_config.process_vae_state_dict(vae_sd)
         vae = VAE(sd=vae_sd)
 
     if output_clip:
@@ -481,6 +501,9 @@ def load_unet(unet_path): #load unet in diffusers format
     model = model_config.get_model(new_sd, "")
     model = model.to(offload_device)
     model.load_model_weights(new_sd, "")
+    left_over = sd.keys()
+    if len(left_over) > 0:
+        print("left over keys in unet:", left_over)
     return fcbh.model_patcher.ModelPatcher(model, load_device=model_management.get_torch_device(), offload_device=offload_device)
 
 def save_checkpoint(output_path, model, clip, vae, metadata=None):

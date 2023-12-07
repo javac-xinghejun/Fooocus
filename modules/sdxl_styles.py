@@ -5,7 +5,7 @@ import json
 from modules.util import get_files_from_folder
 
 
-# cannot use modules.path - validators causing circular imports
+# cannot use modules.config - validators causing circular imports
 styles_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../sdxl_styles/'))
 wildcards_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../wildcards/'))
 wildcards_max_bfs_depth = 64
@@ -40,7 +40,9 @@ for styles_file in styles_files:
     try:
         with open(os.path.join(styles_path, styles_file), encoding='utf-8') as f:
             for entry in json.load(f):
-                name, prompt, negative_prompt = normalize_key(entry['name']), entry['prompt'], entry['negative_prompt']
+                name = normalize_key(entry['name'])
+                prompt = entry['prompt'] if 'prompt' in entry else ''
+                negative_prompt = entry['negative_prompt'] if 'negative_prompt' in entry else ''
                 styles[name] = (prompt, negative_prompt)
     except Exception as e:
         print(str(e))
@@ -101,7 +103,7 @@ for k, (w, h) in SD_XL_BASE_RATIOS.items():
 
 def apply_style(style, positive):
     p, n = styles[style]
-    return p.replace('{prompt}', positive), n
+    return p.replace('{prompt}', positive).splitlines(), n.splitlines()
 
 
 def apply_wildcards(wildcard_text, rng, directory=wildcards_path):

@@ -1,8 +1,16 @@
 <div align=center>
-<img src="https://github.com/lllyasviel/Fooocus/assets/19834515/9ad8ae87-1dc2-4acc-9a44-a5fa4ae2aad6" width=80%>
+<img src="https://github.com/lllyasviel/Fooocus/assets/19834515/483fb86d-c9a2-4c20-997c-46dafc124f25">
 
-*(Screenshot of Fooocus Realistic "run_realistic.bat" using default parameters without any manual tweaking)*
+**Non-cherry-picked** random batch by just typing two words "forest elf", 
+
+without any parameter tweaking, without any strange prompt tags. 
+
+See also **non-cherry-picked** generalization and diversity tests [here](https://github.com/lllyasviel/Fooocus/discussions/808) and [here](https://github.com/lllyasviel/Fooocus/discussions/679) and [here](https://github.com/lllyasviel/Fooocus/discussions/679#realistic).
+
+In the entire open source community, only Fooocus can achieve this level of **non-cherry-picked** quality.
+
 </div>
+
 
 # Fooocus
 
@@ -42,6 +50,7 @@ Using Fooocus is as easy as (probably easier than) Midjourney – but this does 
 | Prompt Weights | You can use " I am (happy:1.5)". <br> Fooocus uses A1111's reweighting algorithm so that results are better than ComfyUI if users directly copy prompts from Civitai. (Because if prompts are written in ComfyUI's reweighting, users are less likely to copy prompt texts as they prefer dragging files) <br> To use embedding, you can use "(embedding:file_name:1.1)" |
 | --no | Advanced -> Negative Prompt |
 | --ar | Advanced -> Aspect Ratios |
+| InsightFace | Input Image -> Image Prompt -> Advanced -> FaceSwap |
 
 We also have a few things borrowed from the best parts of LeonardoAI:
 
@@ -59,7 +68,7 @@ Fooocus also developed many "fooocus-only" features for advanced users to get pe
 
 You can directly download Fooocus with:
 
-**[>>> Click here to download <<<](https://github.com/lllyasviel/Fooocus/releases/download/release/Fooocus_win64_2-1-60.7z)**
+**[>>> Click here to download <<<](https://github.com/lllyasviel/Fooocus/releases/download/release/Fooocus_win64_2-1-791.7z)**
 
 After you download the file, please uncompress it, and then run the "run.bat".
 
@@ -67,9 +76,8 @@ After you download the file, please uncompress it, and then run the "run.bat".
 
 In the first time you launch the software, it will automatically download models:
 
-1. It will download [sd_xl_base_1.0_0.9vae.safetensors from here](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0_0.9vae.safetensors) as the file "Fooocus\models\checkpoints\sd_xl_base_1.0_0.9vae.safetensors".
-2. It will download [sd_xl_refiner_1.0_0.9vae.safetensors from here](https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0_0.9vae.safetensors) as the file "Fooocus\models\checkpoints\sd_xl_refiner_1.0_0.9vae.safetensors".
-3. Note that if you use inpaint, at the first time you inpaint an image, it will download [Fooocus's own inpaint control model from here](https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/inpaint.fooocus.patch) as the file "Fooocus\models\inpaint\inpaint.fooocus.patch" (the size of this file is 1.28GB).
+1. It will download [default models](#models) to the folder "Fooocus\models\checkpoints" given different presets. You can download them in advance if you do not want automatic download.
+2. Note that if you use inpaint, at the first time you inpaint an image, it will download [Fooocus's own inpaint control model from here](https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/inpaint_v26.fooocus.patch) as the file "Fooocus\models\inpaint\inpaint_v26.fooocus.patch" (the size of this file is 1.28GB).
 
 After Fooocus 2.1.60, you will also have `run_anime.bat` and `run_realistic.bat`. They are different model presets (and requires different models, but thet will be automatically downloaded). [Check here for more details](https://github.com/lllyasviel/Fooocus/discussions/679).
 
@@ -100,7 +108,7 @@ Please open an issue if you use similar devices but still cannot achieve accepta
 
 ### Colab
 
-(Last tested - 2023 Oct 10)
+(Last tested - 2023 Nov 15)
 
 | Colab | Info
 | --- | --- |
@@ -120,9 +128,9 @@ If you want to use Anaconda/Miniconda, you can
     cd Fooocus
     conda env create -f environment.yaml
     conda activate fooocus
-    pip install pygit2==1.12.2
+    pip install -r requirements_versions.txt
 
-Then download the models: download [sd_xl_base_1.0_0.9vae.safetensors from here](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0_0.9vae.safetensors) as the file "Fooocus\models\checkpoints\sd_xl_base_1.0_0.9vae.safetensors", and download [sd_xl_refiner_1.0_0.9vae.safetensors from here](https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0_0.9vae.safetensors) as the file "Fooocus\models\checkpoints\sd_xl_refiner_1.0_0.9vae.safetensors". **Or let Fooocus automatically download the models** using the launcher:
+Then download the models: download [default models](#models) to the folder "Fooocus\models\checkpoints". **Or let Fooocus automatically download the models** using the launcher:
 
     conda activate fooocus
     python entry_with_update.py
@@ -142,7 +150,7 @@ Your Linux needs to have **Python 3.10** installed, and lets say your Python can
     cd Fooocus
     python3 -m venv fooocus_env
     source fooocus_env/bin/activate
-    pip install pygit2==1.12.2
+    pip install -r requirements_versions.txt
 
 See the above sections for model downloads. You can launch the software with:
 
@@ -162,7 +170,7 @@ If you know what you are doing, and your Linux already has **Python 3.10** insta
 
     git clone https://github.com/lllyasviel/Fooocus.git
     cd Fooocus
-    pip3 install pygit2==1.12.2
+    pip3 install -r requirements_versions.txt
 
 See the above sections for model downloads. You can launch the software with:
 
@@ -211,11 +219,23 @@ You can install Fooocus on Apple Mac silicon (M1 or M2) with macOS 'Catalina' or
 1. Change to the new Fooocus directory, `cd Fooocus`.
 1. Create a new conda environment, `conda env create -f environment.yaml`.
 1. Activate your new conda environment, `conda activate fooocus`.
-1. Install the pygit2, `pip install pygit2==1.12.2`.
 1. Install the packages required by Fooocus, `pip install -r requirements_versions.txt`.
-1. Launch Fooocus by running `python entry_with_update.py`. The first time you run Fooocus, it will automatically download the Stable Diffusion SDXL models and will take a significant time, depending on your internet connection.
+1. Launch Fooocus by running `python entry_with_update.py`. (Some Mac M2 users may need `python entry_with_update.py --enable-smart-memory` to speed up model loading/unloading.) The first time you run Fooocus, it will automatically download the Stable Diffusion SDXL models and will take a significant time, depending on your internet connection.
 
 Use `python entry_with_update.py --preset anime` or `python entry_with_update.py --preset realistic` for Fooocus Anime/Realistic Edition.
+
+## Default Models
+<a name="models"></a>
+
+Given different goals, the default models and configs of Fooocus is different:
+
+| Task | Windows | Linux args | Main Model | Refiner | Config |
+| - | - | - | - | - | - |
+| General | run.bat |  | [juggernautXL v6_RunDiffusion](https://huggingface.co/lllyasviel/fav_models/resolve/main/fav/juggernautXL_version6Rundiffusion.safetensors) | not used | [here](https://github.com/lllyasviel/Fooocus/blob/main/modules/path.py) |
+| Realistic | run_realistic.bat | --preset realistic | [realistic_stock_photo](https://huggingface.co/lllyasviel/fav_models/resolve/main/fav/realisticStockPhoto_v10.safetensors) | not used | [here](https://github.com/lllyasviel/Fooocus/blob/main/presets/realistic.json) |
+| Anime | run_anime.bat | --preset anime | [bluepencil_v50](https://huggingface.co/lllyasviel/fav_models/resolve/main/fav/bluePencilXL_v050.safetensors) | [dreamsharper_v8](https://huggingface.co/lllyasviel/fav_models/resolve/main/fav/DreamShaper_8_pruned.safetensors) (SD1.5) | [here](https://github.com/lllyasviel/Fooocus/blob/main/presets/anime.json) |
+
+Note that the download is **automatic** - you do not need to do anything if the internet connection is okay. However, you can download them manually if you (or move them from somewhere else) have your own preparation.
 
 ## List of "Hidden" Tricks
 <a name="tech_list"></a>
@@ -239,27 +259,25 @@ Below things are already inside the software, and **users do not need to do anyt
 
 ## Customization
 
-After the first time you run Fooocus, a config file will be generated at `Fooocus\user_path_config.txt`. This file can be edited for changing the model path. You can also change some parameters to turn Fooocus into "your Fooocus".
+After the first time you run Fooocus, a config file will be generated at `Fooocus\config.txt`. This file can be edited for changing the model path or default parameters.
 
-For example ["realisticStockPhoto_v10" is a pretty good model from CivitAI](https://civitai.com/models/139565/realistic-stock-photo). This model needs a special `CFG=3.0` and probably works better with some specific styles. Below is an example config to turn Fooocus into a **"Fooocus Realistic Stock Photo Software"**:
-
-`Fooocus\user_path_config.txt`:
+For example, an edited `Fooocus\config.txt` (this file will be generated after the first launch) may look like this:
 
 ```json
 {
-    "modelfile_path": "D:\\Fooocus\\models\\checkpoints",
-    "lorafile_path": "D:\\Fooocus\\models\\loras",
-    "vae_approx_path": "D:\\Fooocus\\models\\vae_approx",
-    "upscale_models_path": "D:\\Fooocus\\models\\upscale_models",
-    "inpaint_models_path": "D:\\Fooocus\\models\\inpaint",
-    "controlnet_models_path": "D:\\Fooocus\\models\\controlnet",
-    "clip_vision_models_path": "D:\\Fooocus\\models\\clip_vision",
-    "fooocus_expansion_path": "D:\\Fooocus\\models\\prompt_expansion\\fooocus_expansion",
-    "temp_outputs_path": "D:\\Fooocus\\outputs",
+    "path_checkpoints": "D:\\Fooocus\\models\\checkpoints",
+    "path_loras": "D:\\Fooocus\\models\\loras",
+    "path_embeddings": "D:\\Fooocus\\models\\embeddings",
+    "path_vae_approx": "D:\\Fooocus\\models\\vae_approx",
+    "path_upscale_models": "D:\\Fooocus\\models\\upscale_models",
+    "path_inpaint": "D:\\Fooocus\\models\\inpaint",
+    "path_controlnet": "D:\\Fooocus\\models\\controlnet",
+    "path_clip_vision": "D:\\Fooocus\\models\\clip_vision",
+    "path_fooocus_expansion": "D:\\Fooocus\\models\\prompt_expansion\\fooocus_expansion",
+    "path_outputs": "D:\\Fooocus\\outputs",
     "default_model": "realisticStockPhoto_v10.safetensors",
     "default_refiner": "",
-    "default_lora": "",
-    "default_lora_weight": 0.25,
+    "default_loras": [["lora_filename_1.safetensors", 0.5], ["lora_filename_2.safetensors", 0.5]],
     "default_cfg_scale": 3.0,
     "default_sampler": "dpmpp_2m",
     "default_scheduler": "karras",
@@ -267,25 +285,29 @@ For example ["realisticStockPhoto_v10" is a pretty good model from CivitAI](http
     "default_positive_prompt": "",
     "default_styles": [
         "Fooocus V2",
-        "Default (Slightly Cinematic)",
-        "SAI Photographic"
+        "Fooocus Photograph",
+        "Fooocus Negative"
     ]
 }
 ```
 
-Consider twice before you really change the config. If you find yourself breaking things, just delete `Fooocus\user_path_config.txt`. Fooocus will go back to default.
+Many other keys, formats, and examples are in `Fooocus\config_modification_tutorial.txt` (this file will be generated after the first launch).
+
+Consider twice before you really change the config. If you find yourself breaking things, just delete `Fooocus\config.txt`. Fooocus will go back to default.
 
 A safter way is just to try "run_anime.bat" or "run_realistic.bat" - they should be already good enough for different tasks.
+
+~Note that `user_path_config.txt` is deprecated and will be removed soon.~ (Edit: it is already removed.)
 
 ## Advanced Features
 
 [Click here to browse the advanced features.](https://github.com/lllyasviel/Fooocus/discussions/117)
 
-Fooocus also has many community forks, just like SD-WebUI, for enthusiastic users who want to try!
+Fooocus also has many community forks, just like SD-WebUI's [vladmandic/automatic](https://github.com/vladmandic/automatic) and [anapnoe/stable-diffusion-webui-ux](https://github.com/anapnoe/stable-diffusion-webui-ux), for enthusiastic users who want to try!
 
-| SD-WebUI's forks | Fooocus' forks |
-| - | - |
-| [vladmandic/automatic](https://github.com/vladmandic/automatic) </br> [anapnoe/stable-diffusion-webui-ux](https://github.com/anapnoe/stable-diffusion-webui-ux) </br> and so on ... | [runew0lf/RuinedFooocus](https://github.com/runew0lf/RuinedFooocus) </br> [MoonRide303/Fooocus-MRE](https://github.com/MoonRide303/Fooocus-MRE) </br> and so on ... |
+| Fooocus' forks |
+| - |
+| [fenneishi/Fooocus-Control](https://github.com/fenneishi/Fooocus-Control) </br>[runew0lf/RuinedFooocus](https://github.com/runew0lf/RuinedFooocus) </br> [MoonRide303/Fooocus-MRE](https://github.com/MoonRide303/Fooocus-MRE) </br> and so on ... |
 
 See also [About Forking and Promotion of Forks](https://github.com/lllyasviel/Fooocus/discussions/699).
 
