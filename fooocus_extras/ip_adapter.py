@@ -7,6 +7,7 @@ import fcbh.ldm.modules.attention as attention
 
 from fooocus_extras.resampler import Resampler
 from fcbh.model_patcher import ModelPatcher
+from modules.core import numpy_to_pytorch
 
 
 SD_V12_CHANNELS = [320] * 4 + [640] * 4 + [1280] * 4 + [1280] * 6 + [640] * 6 + [320] * 6 + [1280] * 2
@@ -83,26 +84,20 @@ class IPAdapterModel(torch.nn.Module):
 
 clip_vision: fcbh.clip_vision.ClipVisionModel = None
 ip_negative: torch.Tensor = None
-image_proj_model: ModelPatcher = None
-ip_layers: ModelPatcher = None
-ip_adapter: IPAdapterModel = None
-ip_unconds = None
+ip_adapters: dict = {}
 
 
 def load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path):
-    global clip_vision, image_proj_model, ip_layers, ip_negative, ip_adapter, ip_unconds
+    global clip_vision, ip_negative, ip_adapters
 
-    if clip_vision_path is None:
-        return
-    if ip_negative_path is None:
-        return
-    if ip_adapter_path is None:
-        return
-    if clip_vision is not None and image_proj_model is not None and ip_layers is not None and ip_negative is not None:
-        return
+    if clip_vision is None and isinstance(clip_vision_path, str):
+        clip_vision = fcbh.clip_vision.load(clip_vision_path)
 
-    ip_negative = sf.load_file(ip_negative_path)['data']
-    clip_vision = fcbh.clip_vision.load(clip_vision_path)
+    if ip_negative is None and isinstance(ip_negative_path, str):
+        ip_negative = sf.load_file(ip_negative_path)['data']
+
+    if not isinstance(ip_adapter_path, str) or ip_adapter_path in ip_adapters:
+        return
 
     load_device = model_management.get_torch_device()
     offload_device = torch.device('cpu')
@@ -140,18 +135,38 @@ def load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path):
     ip_layers = ModelPatcher(model=ip_adapter.ip_layers, load_device=load_device,
                              offload_device=offload_device)
 
-    ip_unconds = None
+    ip_adapters[ip_adapter_path] = dict(
+        ip_adapter=ip_adapter,
+        image_proj_model=image_proj_model,
+        ip_layers=ip_layers,
+        ip_unconds=None
+    )
+
     return
 
 
 @torch.no_grad()
 @torch.inference_mode()
-def preprocess(img):
-    global ip_unconds
+def clip_preprocess(image):
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=image.device, dtype=image.dtype).view([1, 3, 1, 1])
+    std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=image.device, dtype=image.dtype).view([1, 3, 1, 1])
+    image = image.movedim(-1, 1)
 
-    inputs = clip_vision.processor(images=img, return_tensors="pt")
+    # https://github.com/tencent-ailab/IP-Adapter/blob/d580c50a291566bbf9fc7ac0f760506607297e6d/README.md?plain=1#L75
+    B, C, H, W = image.shape
+    assert H == 224 and W == 224
+
+    return (image - mean) / std
+
+
+@torch.no_grad()
+@torch.inference_mode()
+def preprocess(img, ip_adapter_path):
+    global ip_adapters
+    entry = ip_adapters[ip_adapter_path]
+
     fcbh.model_management.load_model_gpu(clip_vision.patcher)
-    pixel_values = inputs['pixel_values'].to(clip_vision.load_device)
+    pixel_values = clip_preprocess(numpy_to_pytorch(img).to(clip_vision.load_device))
 
     if clip_vision.dtype != torch.float32:
         precision_scope = torch.autocast
@@ -160,6 +175,11 @@ def preprocess(img):
 
     with precision_scope(fcbh.model_management.get_autocast_device(clip_vision.load_device), torch.float32):
         outputs = clip_vision.model(pixel_values=pixel_values, output_hidden_states=True)
+
+    ip_adapter = entry['ip_adapter']
+    ip_layers = entry['ip_layers']
+    image_proj_model = entry['image_proj_model']
+    ip_unconds = entry['ip_unconds']
 
     if ip_adapter.plus:
         cond = outputs.hidden_states[-2]
@@ -176,9 +196,11 @@ def preprocess(img):
     if ip_unconds is None:
         uncond = ip_negative.to(device=ip_adapter.load_device, dtype=ip_adapter.dtype)
         ip_unconds = [m(uncond).cpu() for m in ip_layers.model.to_kvs]
+        entry['ip_unconds'] = ip_unconds
 
     ip_conds = [m(cond).cpu() for m in ip_layers.model.to_kvs]
-    return ip_conds
+
+    return ip_conds, ip_unconds
 
 
 @torch.no_grad()
@@ -192,46 +214,46 @@ def patch_model(model, tasks):
             current_step = float(model.model.diffusion_model.current_step.detach().cpu().numpy()[0])
             cond_or_uncond = extra_options['cond_or_uncond']
 
-            with torch.autocast("cuda", dtype=ip_adapter.dtype):
-                q = n
-                k = [context_attn2]
-                v = [value_attn2]
-                b, _, _ = q.shape
+            q = n
+            k = [context_attn2]
+            v = [value_attn2]
+            b, _, _ = q.shape
 
-                for ip_conds, cn_stop, cn_weight in tasks:
-                    if current_step < cn_stop:
-                        ip_k_c = ip_conds[ip_index * 2].to(q)
-                        ip_v_c = ip_conds[ip_index * 2 + 1].to(q)
-                        ip_k_uc = ip_unconds[ip_index * 2].to(q)
-                        ip_v_uc = ip_unconds[ip_index * 2 + 1].to(q)
+            for (cs, ucs), cn_stop, cn_weight in tasks:
+                if current_step < cn_stop:
+                    ip_k_c = cs[ip_index * 2].to(q)
+                    ip_v_c = cs[ip_index * 2 + 1].to(q)
+                    ip_k_uc = ucs[ip_index * 2].to(q)
+                    ip_v_uc = ucs[ip_index * 2 + 1].to(q)
 
-                        ip_k = torch.cat([(ip_k_c, ip_k_uc)[i] for i in cond_or_uncond], dim=0)
-                        ip_v = torch.cat([(ip_v_c, ip_v_uc)[i] for i in cond_or_uncond], dim=0)
+                    ip_k = torch.cat([(ip_k_c, ip_k_uc)[i] for i in cond_or_uncond], dim=0)
+                    ip_v = torch.cat([(ip_v_c, ip_v_uc)[i] for i in cond_or_uncond], dim=0)
 
-                        # Midjourney's attention formulation of image prompt (non-official reimplementation)
-                        # Written by Lvmin Zhang at Stanford University, 2023 Dec
-                        # For non-commercial use only - if you use this in commercial project then
-                        # probably it has some intellectual property issues.
-                        # Contact lvminzhang@acm.org if you are not sure.
+                    # Midjourney's attention formulation of image prompt (non-official reimplementation)
+                    # Written by Lvmin Zhang at Stanford University, 2023 Dec
+                    # For non-commercial use only - if you use this in commercial project then
+                    # probably it has some intellectual property issues.
+                    # Contact lvminzhang@acm.org if you are not sure.
 
-                        # Below is the sensitive part with potential intellectual property issues.
+                    # Below is the sensitive part with potential intellectual property issues.
 
-                        ip_v_mean = torch.mean(ip_v, dim=1, keepdim=True)
-                        ip_v_offset = ip_v - ip_v_mean
+                    ip_v_mean = torch.mean(ip_v, dim=1, keepdim=True)
+                    ip_v_offset = ip_v - ip_v_mean
 
-                        B, F, C = ip_k.shape
-                        channel_penalty = float(C) / 1280.0
-                        weight = cn_weight * channel_penalty
+                    B, F, C = ip_k.shape
+                    channel_penalty = float(C) / 1280.0
+                    weight = cn_weight * channel_penalty
 
-                        ip_k = ip_k * weight
-                        ip_v = ip_v_offset + ip_v_mean * weight
+                    ip_k = ip_k * weight
+                    ip_v = ip_v_offset + ip_v_mean * weight
 
-                        k.append(ip_k)
-                        v.append(ip_v)
+                    k.append(ip_k)
+                    v.append(ip_v)
 
-                k = torch.cat(k, dim=1)
-                v = torch.cat(v, dim=1)
-                out = sdp(q, k, v, extra_options)
+            k = torch.cat(k, dim=1)
+            v = torch.cat(v, dim=1)
+            out = sdp(q, k, v, extra_options)
+
 
             return out.to(dtype=org_dtype)
         return patcher
@@ -246,27 +268,21 @@ def patch_model(model, tasks):
             to["patches_replace"]["attn2"][key] = make_attn_patcher(number)
 
     number = 0
-    if not ip_adapter.sdxl:
-        for id in [1, 2, 4, 5, 7, 8]:  # id of input_blocks that have cross attention
-            set_model_patch_replace(new_model, number, ("input", id))
+
+    for id in [4, 5, 7, 8]:
+        block_indices = range(2) if id in [4, 5] else range(10)
+        for index in block_indices:
+            set_model_patch_replace(new_model, number, ("input", id, index))
             number += 1
-        for id in [3, 4, 5, 6, 7, 8, 9, 10, 11]:  # id of output_blocks that have cross attention
-            set_model_patch_replace(new_model, number, ("output", id))
+
+    for id in range(6):
+        block_indices = range(2) if id in [3, 4, 5] else range(10)
+        for index in block_indices:
+            set_model_patch_replace(new_model, number, ("output", id, index))
             number += 1
-        set_model_patch_replace(new_model, number, ("middle", 0))
-    else:
-        for id in [4, 5, 7, 8]:  # id of input_blocks that have cross attention
-            block_indices = range(2) if id in [4, 5] else range(10)  # transformer_depth
-            for index in block_indices:
-                set_model_patch_replace(new_model, number, ("input", id, index))
-                number += 1
-        for id in range(6):  # id of output_blocks that have cross attention
-            block_indices = range(2) if id in [3, 4, 5] else range(10)  # transformer_depth
-            for index in block_indices:
-                set_model_patch_replace(new_model, number, ("output", id, index))
-                number += 1
-        for index in range(10):
-            set_model_patch_replace(new_model, number, ("middle", 0, index))
-            number += 1
+
+    for index in range(10):
+        set_model_patch_replace(new_model, number, ("middle", 0, index))
+        number += 1
 
     return new_model
